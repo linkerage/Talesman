@@ -17,6 +17,7 @@ from config import ADMINS
 from persistence import load_character, char_path
 import game as _game
 import gm_tools as _gm
+import points as _pts
 
 
 # ------------------------------------------------------------
@@ -32,6 +33,7 @@ def cmd_help(bot, nick, target, args):
         "\x02DM seat:\x02  !dm claim  start [title]  narrate <text>  award <nick> <n> [gp|xp]",
         "\x02Combat:\x02   !fight <monster>  (call again each round to continue)",
         "\x02Graveyard:\x02 !graveyard  !tombstone <nick>  !rez <nick> (admin/DM only)",
+        "\x02420-pts:\x02   !pts [nick]  !ptsboard  !pts2gp [n]  !gp2pts [n]  !cash",
         "\x02MM/DMG:\x02   !monster <name>  !cr <cr>  !encounter <diff> <lvl>  !loot [cr]  !mitem [name]",
     ]
     for line in lines:
@@ -305,7 +307,7 @@ COMMANDS = {
     "!gold":       lambda bot, nick, target, args: _game.cmd_gold(bot, nick, target, args),
     "!gp":         lambda bot, nick, target, args: _game.cmd_gold(bot, nick, target, args),
     "!pay":        lambda bot, nick, target, args: _game.cmd_pay(bot, nick, target, args),
-    "!cash":       lambda bot, nick, target, args: _game.cmd_cash(bot, nick, target, args),
+    # !cash is handled by points.py (chr0n ledger) — removed from here
     "!hp":         lambda bot, nick, target, args: _game.cmd_hp(bot, nick, target, args),
     "!save":       lambda bot, nick, target, args: _game.cmd_save_roll(bot, nick, target, args),
     "!attack":     lambda bot, nick, target, args: _game.cmd_attack(bot, nick, target, args),
@@ -317,6 +319,12 @@ COMMANDS = {
     "!graveyard":  lambda bot, nick, target, args: _game.cmd_graveyard(bot, nick, target, args),
     "!tombstone":  lambda bot, nick, target, args: _game.cmd_tombstone(bot, nick, target, args),
     "!rez":        lambda bot, nick, target, args: _game.cmd_rez(bot, nick, target, args),
+    # 420-point economy (chr0n↔Talesman exchange)
+    "!pts":       lambda bot, nick, target, args: _pts.cmd_pts(bot, nick, target, args),
+    "!ptsboard":  lambda bot, nick, target, args: _pts.cmd_ptsboard(bot, nick, target, args),
+    "!pts2gp":    lambda bot, nick, target, args: _pts.cmd_pts2gp(bot, nick, target, args),
+    "!gp2pts":    lambda bot, nick, target, args: _pts.cmd_gp2pts(bot, nick, target, args),
+    "!cash":      lambda bot, nick, target, args: _pts.cmd_cash(bot, nick, target, args),
     # Monster Manual + DMG reference
     "!monster":    lambda bot, nick, target, args: _gm.cmd_monster(bot, nick, target, args),
     "!cr":         lambda bot, nick, target, args: _gm.cmd_cr(bot, nick, target, args),
