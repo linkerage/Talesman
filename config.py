@@ -37,17 +37,23 @@ ADMINS = {
 
 def _read_credential(env_var: str) -> str:
     """
-    Loads a credential from a systemd-provided file path.
-    The environment variable contains *the path* to the secret.
+    Loads a credential from the environment.
+    Supports two modes:
+      1. env var = path to a file  (systemd LoadCredential style)
+      2. env var = the raw secret  (direct / .env style)
     """
-    path = os.getenv(env_var, "")
-    if not path:
+    value = os.getenv(env_var, "").strip()
+    if not value:
         return ""
-    try:
-        with open(path, "r") as f:
-            return f.read().strip()
-    except Exception:
-        return ""
+    # If the value looks like a file path and the file exists, read it
+    if os.path.exists(value):
+        try:
+            with open(value, "r") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    # Otherwise treat it as the credential directly
+    return value
 
 # NickServ + SASL
 NICKSERV_PASSWORD = _read_credential("TALESMAN_PASS")

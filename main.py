@@ -77,7 +77,14 @@ class TalesmanBot:
                 time.sleep(delay - elapsed)
             self.sock.send((raw + "\r\n").encode("utf-8", errors="replace"))
             self._last_send_time = time.monotonic()
-        logging.info(f">>> {raw}")
+        # Mask NickServ credential commands so passwords never appear in logs
+        log_line = raw
+        if "PRIVMSG NickServ" in raw and any(
+            kw in raw.upper() for kw in ("IDENTIFY", "GHOST", "REGISTER", "SET PASSWORD")
+        ):
+            log_line = raw.split()[0:3]
+            log_line = " ".join(log_line) + " <masked>"
+        logging.info(f">>> {log_line}")
 
     def send_raw(self, msg: str):
         """Control messages (PONG, JOIN, NICK, CAP …) — light throttle."""
