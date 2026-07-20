@@ -77,15 +77,53 @@ Hermit · Noble · Outlander · Sage · Sailor · Soldier
 | `!save <ability>` | Roll a saving throw — `str` `dex` `con` `int` `wis` `cha` |
 | `!attack [target]` | Roll an attack using your class's primary ability + proficiency bonus |
 
-### Gold Economy
+### Gold Economy (D&D GP)
 | Command | Description |
 |---|---|
-| `!gold [nick]` | Check GP balance |
+| `!gold [nick]` | Check D&D GP balance (Talesman bank) |
 | `!pay <nick> <amount>` | Transfer GP to another player |
-| `!cash` | Check gift card eligibility — 420 GP redeems for a $100 Visa gift card (PM n01d to arrange) |
 
-> **chr0n** starts with **420 GP** already on account.  
-> Every 1 GP earned in-game = 1 point toward the gift card.
+---
+
+## 420-Point Economy
+
+Two separate ledgers bridge the #gentoo-weed 420-point culture with the D&D economy. Exchange is always **1 point = 1 GP**.
+
+### The two ledgers
+
+| | 420-Points | D&D Gold (GP) |
+|---|---|---|
+| **Source** | Toking at 4:20 AM/PM in #gentoo-weed | Combat, DM awards, trading |
+| **File** | `/home/n01d/chr0n/420_points.json` | `data/bank.json` |
+| **Tracked by** | chr0n's bot | Talesman |
+| **Check with** | `!pts [nick]` | `!gold [nick]` |
+
+### 420-Point Commands
+| Command | Description |
+|---|---|
+| `!pts [nick]` | Show 420-pt balance (chr0n's ledger) **and** D&D GP balance side by side |
+| `!ptsboard` | Full 420-point leaderboard from chr0n's file |
+| `!pts2gp [n]` | Convert N 420-pts → N GP — deducted from chr0n's file, added to Talesman bank |
+| `!gp2pts [n]` | Convert N GP → N 420-pts — deducted from Talesman bank, added to chr0n's file |
+| `!cash` | Check if you have 420+ pts or GP — see redemption instructions |
+
+Omit `n` from `!pts2gp` or `!gp2pts` to exchange your entire balance.
+
+### Gift Card Redemption
+When you accumulate **420 420-points** (in chr0n's ledger) you are eligible to redeem for a **$100 Visa gift card**.
+
+1. Run `!cash` — the bot confirms eligibility using chr0n's real file
+2. PM **n01d** on IRC to arrange the redemption
+3. Once confirmed, 420 pts are permanently deducted from chr0n's file
+
+If your points are currently in D&D GP instead of chr0n's ledger, run `!gp2pts 420` first to move them back.
+
+### Current leaderboard (chr0n's file)
+As of the last commit:
+- 🥇 **ph0bos**: 481 pts ← already eligible
+- 🥈 **Digit**: 274 pts
+- 🥉 **n01d**: 119 pts
+- **z6np-6w**: 79 pts · **FilthyPitDog**: 40 pts · **n01**: 32 pts · **witn3ss**: 24 pts
 
 ---
 
@@ -258,11 +296,14 @@ All channel commands are capped at **5 lines**. If a response would be longer (e
 
 ### Data Storage
 All game state is stored as JSON in `data/`:
-- `bank.json` — GP balances keyed by nick
+- `bank.json` — D&D GP balances keyed by nick
 - `characters/<nick>.json` — Individual 5e character sheets
 - `sessions.json` — Active DM sessions per channel (survives restart)
 - `dm_config.json` — Per-channel DM lock configuration
 - `graveyard.json` — Permanent tombstone records for all fallen characters
+
+External file (read/write by Talesman):
+- `/home/n01d/chr0n/420_points.json` — chr0n's 420-point ledger; all exchanges and cashouts write history entries back here
 
 ### Legacy System
 The original modern-day RPG system (`!create`, `!sheet`, `!bio`, `!thesis`) is still available alongside the D&D 5e system. Old characters are stored in `data/characters.json` and are distinguished by the absence of a `"system": "dnd5e"` field.
