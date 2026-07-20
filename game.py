@@ -27,6 +27,7 @@ from graveyard import (
     is_dead, bury_character, get_tombstone, list_graves,
     resurrect, _ts_str,
 )
+import loot as _loot_mod
 
 from config import DATA_DIR, ADMINS
 from persistence import (
@@ -945,7 +946,7 @@ def _apply_damage_to_player(
 
 
 def _kill_character(char: dict, killer: str, killing_blow: str, bot, channel: str):
-    """Bury a character in the graveyard and announce their death."""
+    """Bury a character, strip their gold as a loot pile, announce death."""
     nick = char["nick"]
     name = char.get("name", nick)
 
@@ -953,12 +954,27 @@ def _kill_character(char: dict, killer: str, killing_blow: str, bot, channel: st
     with _enc_lock:
         _encounters.pop(nick.lower(), None)
 
+    # Strip gold from bank — it becomes a loot pile anyone can collect
+    bank = load_bank()
+    gold = get_balance(bank, nick)
+    if gold > 0:
+        set_balance(bank, nick, 0)
+        save_bank(bank)
+        _loot_mod.add_loot(channel, nick, name, gold)
+
     bury_character(char, killer, killing_blow)
 
-    bot.send_privmsg(channel,
+    death_msg = (
         f"\x02\u26b0 {name} has fallen! \u26b0\x02  "
         f"Slain by \x02{killer}\x02. "
-        f"Use \x02!tombstone {nick}\x02 to pay your respects.")
+        f"Use \x02!tombstone {nick}\x02 to pay your respects."
+    )
+    if gold > 0:
+        death_msg += (
+            f"  \x02{gold} GP dropped on the battlefield\x02 — "
+            f"use \x02!loot {nick}\x02 to collect it!"
+        )
+    bot.send_privmsg(channel, death_msg)
 
 
 # ----------------------------------------------------------------
@@ -1162,6 +1178,98 @@ def _dm_ambush(bot, nick, target, args):
         bot.send_privmsg(target,
             f"\x02[AMBUSH]\x02 \x02{m_name}\x02 attacks \x02{whom}\x02: "
             f"d20({roll}){atk_b:+d} = {total} vs AC {char.get('ac',10)} \u2192 {miss}")
+
+
+# ================================================================
+# Loot Commands
+# ================================================================
+
+def cmd_loot(bot, nick, target, args):
+    """`!loot [dead_nick]` — list or collect loot piles in the channel."""
+    if not target.startswith("#"):
+        bot.send_privmsg(nick, "Use !loot in a channel.")
+        return
+
+    query = args.strip().split()[0] if args.strip() else ""
+
+    if not query:
+        # List all piles in channel
+        piles = _loot_mod.list_loot(target)
+        if not piles:
+            bot.send_privmsg(target, "\x02No loot on the battlefield.\x02  Slay monsters or wait for someone to fall.")
+            return
+        bot.send_privmsg(target, f"\x02\U0001F4B0 Uncollected loot in {target}:\x02")
+        for p in piles:
+            bot.send_privmsg(target,
+                f"  \u2620 \x02{p['name']}\x02 ({p['nick']}) dropped "
+                f"\x02{p['gold']} GP\x02 — !loot {p['nick']} to collect")
+        return
+
+    # Collect a specific pile
+    # You can't loot your own gold (you're dead)
+    if query.lower() == nick.lower():
+        bot.send_privmsg(target, f"{nick}: you can't loot your own corpse.")
+        return
+
+    # Collector must be alive with a character
+    collector = load_character(nick)
+    if not collector or collector.get("system") != "dnd5e":
+        bot.send_privmsg(target, f"{nick}: you need a 5e character to loot. Use !newchar.")
+        return
+    if is_dead(nick) or collector.get("dead"):
+        bot.send_privmsg(target, f"{nick}: the dead cannot loot.")
+        return
+
+    pile = _loot_mod.collect_loot(target, query)
+    if pile is None:
+        bot.send_privmsg(target,
+            f"{nick}: no loot pile found for \x02{query}\x02. "
+            f"Use \x02!loot\x02 to see what's on the battlefield.")
+        return
+
+    # Add gold to collector's bank
+    bank  = load_bank()
+    old   = get_balance(bank, nick)
+    new   = old + pile["gold"]
+    set_balance(bank, nick, new)
+    save_bank(bank)
+
+    bot.send_privmsg(target,
+        f"\U0001F4B0 \x02{nick}\x02 loots the fallen \x02{pile['name']}\x02 "
+        f"and finds \x02{pile['gold']} GP\x02!  "
+        f"(Balance: {new} GP)")
+
+
+def cmd_scavenge(bot, nick, target, args):
+    """`!scavenge` — collect ALL loot piles in the channel at once."""
+    if not target.startswith("#"):
+        bot.send_privmsg(nick, "Use !scavenge in a channel.")
+        return
+
+    collector = load_character(nick)
+    if not collector or collector.get("system") != "dnd5e":
+        bot.send_privmsg(target, f"{nick}: you need a 5e character to scavenge. Use !newchar.")
+        return
+    if is_dead(nick) or collector.get("dead"):
+        bot.send_privmsg(target, f"{nick}: the dead cannot scavenge.")
+        return
+
+    piles = _loot_mod.collect_all(target)
+    if not piles:
+        bot.send_privmsg(target, f"{nick}: nothing to scavenge here.")
+        return
+
+    total = sum(p["gold"] for p in piles)
+    bank  = load_bank()
+    old   = get_balance(bank, nick)
+    new   = old + total
+    set_balance(bank, nick, new)
+    save_bank(bank)
+
+    names = ", ".join(f"{p['name']} ({p['gold']} GP)" for p in piles)
+    bot.send_privmsg(target,
+        f"\U0001F4B0 \x02{nick}\x02 scavenges the battlefield: {names}  "
+        f"Total: \x02{total} GP\x02  (Balance: {new} GP)")
 
 
 # ================================================================

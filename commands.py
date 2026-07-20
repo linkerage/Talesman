@@ -32,6 +32,7 @@ def cmd_help(bot, nick, target, args):
         "\x02Gold/XP:\x02  !gold [nick]  !pay <nick> <n>  !cash  !xp [nick]  !hp [nick]",
         "\x02DM seat:\x02  !dm claim  start [title]  narrate <text>  award <nick> <n> [gp|xp]",
         "\x02Combat:\x02   !fight <monster>  (call again each round to continue)",
+        "\x02Loot:\x02      !loot [nick]  !scavenge  (collect gold dropped on death)",
         "\x02Graveyard:\x02 !graveyard  !tombstone <nick>  !rez <nick> (admin/DM only)",
         "\x02420-pts:\x02   !pts [nick]  !ptsboard  !pts2gp [n]  !gp2pts [n]  !cash",
         "\x02MM/DMG:\x02   !monster <name>  !cr <cr>  !encounter <diff> <lvl>  !loot [cr]  !mitem [name]",
@@ -144,17 +145,30 @@ def cmd_nickserv(bot, nick, target, args):
 def cmd_newchar(bot, nick, target, args):
     """Start D&D 5e character creation wizard via PM."""
     from charwizard import start_session, is_active, cancel_session as _cancel
+    from graveyard import is_dead
+
+    # Only one living character per nick — must die or !chardelete first
+    char = load_character(nick)
+    if char and char.get("system") == "dnd5e" and not is_dead(nick) and not char.get("dead"):
+        bot.send_privmsg(nick,
+            f"\x02You already have a living character: {char['name']}.\x02  "
+            "Your character must die in battle or be deleted with "
+            "\x02!chardelete\x02 before you can create a new one.")
+        if target.startswith("#"):
+            bot.send_privmsg(target,
+                f"{nick}: one character at a time — "
+                f"{char['name']} is still alive.")
+        return
 
     if is_active(nick):
         _cancel(nick)
         bot.send_privmsg(nick, "Previous character creation cancelled. Starting fresh.")
 
-    # Warn if a 5e character already exists
-    char = load_character(nick)
-    if char and char.get("system") == "dnd5e":
+    # If previous character is dead, note they can start over
+    if char and char.get("system") == "dnd5e" and (is_dead(nick) or char.get("dead")):
         bot.send_privmsg(nick,
-            f"\x02Warning:\x02 you already have a 5e character ({char['name']}). "
-            "Creating a new one will overwrite it.")
+            f"Your previous character \x02{char['name']}\x02 has fallen. "
+            "Creating your next adventurer…")
 
     start_session(bot, nick)
 
@@ -314,8 +328,10 @@ COMMANDS = {
     "!inventory":  lambda bot, nick, target, args: _game.cmd_inventory(bot, nick, target, args),
     "!session":    lambda bot, nick, target, args: _game.cmd_session(bot, nick, target, args),
     "!players":    lambda bot, nick, target, args: _game.cmd_players(bot, nick, target, args),
-    # Combat + graveyard
+    # Combat + loot + graveyard
     "!fight":      lambda bot, nick, target, args: _game.cmd_fight(bot, nick, target, args),
+    "!loot":       lambda bot, nick, target, args: _game.cmd_loot(bot, nick, target, args),
+    "!scavenge":   lambda bot, nick, target, args: _game.cmd_scavenge(bot, nick, target, args),
     "!graveyard":  lambda bot, nick, target, args: _game.cmd_graveyard(bot, nick, target, args),
     "!tombstone":  lambda bot, nick, target, args: _game.cmd_tombstone(bot, nick, target, args),
     "!rez":        lambda bot, nick, target, args: _game.cmd_rez(bot, nick, target, args),
