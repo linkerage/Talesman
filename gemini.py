@@ -58,17 +58,21 @@ def ask_worker(bot):
             full_text = markdown_to_irc(buffer.strip())
             lines = [l for l in full_text.split("\n") if l.strip()]
 
-            # Send up to MAX_ANSWER_LINES; if truncated, note it
-            to_send = lines[:MAX_ANSWER_LINES]
-            truncated = len(lines) > MAX_ANSWER_LINES
-
-            for line in to_send:
-                bot.send_privmsg(target, f"{nick}: {line}")
-
-            if truncated:
+            if len(lines) <= MAX_ANSWER_LINES:
+                # Short answer — send entirely in channel
+                for line in lines:
+                    bot.send_privmsg(target, f"{nick}: {line}")
+            else:
+                # Long answer — send first 3 lines as summary to channel,
+                # then full answer via PM
+                for line in lines[:MAX_ANSWER_LINES]:
+                    bot.send_privmsg(target, f"{nick}: {line}")
                 bot.send_privmsg(target,
-                    f"{nick}: (truncated — {len(lines) - MAX_ANSWER_LINES} more "
-                    f"line{'s' if len(lines) - MAX_ANSWER_LINES != 1 else ''} omitted)")
+                    f"{nick}: … (full answer sent via PM)")
+                # PM the complete response via flood-safe bulk sender
+                pm_lines = [f"\x02[!ask] {prompt}\x02"] + \
+                           [f"  {l}" for l in lines]
+                bot.send_pm_bulk(nick, pm_lines)
 
         except Exception as e:
             logging.error(f"Gemini worker error: {e}")
