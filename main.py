@@ -382,11 +382,10 @@ class TalesmanBot:
         if not msg.startswith("!"):
             return
 
-        # Parse command + args
-        command, args = parse_command(msg)
-
-        # Route to command handler
-        handle_command(self, nick, target, f"{command} {args}".strip())
+        # Route to command handler — pass msg intact so handle_command
+        # can do its own parsing (parse_command strips the '!' which
+        # breaks the COMMANDS dispatch table lookup).
+        handle_command(self, nick, target, msg)
 
 
 # ------------------------------------------------------------

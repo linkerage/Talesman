@@ -1,6 +1,7 @@
 import os
 from google import genai
 from google.genai import types
+from config import GEMINI_MODEL
 
 _client = None
 
@@ -51,7 +52,7 @@ def ask_gemini(prompt: str) -> str:
     client = get_client()
     try:
         resp = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=256,
@@ -70,7 +71,7 @@ def stream_gemini(prompt: str):
     client = get_client()
     try:
         stream = client.models.generate_content_stream(
-            model="gemini-1.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=256,
@@ -91,7 +92,7 @@ def stream_gemini_admin(prompt: str):
     client = get_client()
     try:
         stream = client.models.generate_content_stream(
-            model="gemini-1.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=512,
@@ -115,7 +116,7 @@ def build_thesis(bio: str) -> str:
     prompt = f"Generate a concise RPG character thesis for: {bio}"
     try:
         resp = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=128,

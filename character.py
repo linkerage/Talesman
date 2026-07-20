@@ -6,8 +6,10 @@ Talesman Character System — Unified + Safe Version
 import os
 import json
 from gemini_client import build_thesis as gemini_build_thesis
+from config import DATA_DIR
 
-CHAR_DIR = "characters"
+# Legacy chars live alongside 5e chars in the same data directory
+CHAR_DIR = os.path.join(DATA_DIR, "characters")
 
 
 # ------------------------------------------------------------
