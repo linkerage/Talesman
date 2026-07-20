@@ -16,11 +16,17 @@ Provides:
 """
 
 import os
+import re
 import time
 import logging
 import threading
 import random
-from typing import Dict, Set, Any, Optional
+from typing import Dict, Set, Any, Optional, Tuple
+
+from graveyard import (
+    is_dead, bury_character, get_tombstone, list_graves,
+    resurrect, _ts_str,
+)
 
 from config import DATA_DIR, ADMINS
 from persistence import (
@@ -53,6 +59,10 @@ PRIZE_CONTACT   = "n01d"
 
 SESSIONS_FILE  = os.path.join(DATA_DIR, "sessions.json")
 DM_CONFIG_FILE = os.path.join(DATA_DIR, "dm_config.json")
+
+# Per-player encounter tracking: {nick_lower: {monster_key, monster_hp, monster_max}}
+_enc_lock   = threading.Lock()
+_encounters: Dict[str, Dict[str, Any]] = {}
 
 # ----------------------------------------------------------------
 # Thread-safe in-memory state
@@ -264,6 +274,7 @@ def cmd_dm(bot, nick, target, args):
         "heal":    _dm_heal,
         "damage":  _dm_damage,
         "dmg":     _dm_damage,        # shorthand
+        "ambush":  _dm_ambush,        # monster attacks a player
         "set":     _dm_set,
         "kick":    _dm_kick,
         "lock":    _dm_lock,
@@ -495,16 +506,7 @@ def _dm_damage(bot, nick, target, args):
     if not char or char.get("system") != "dnd5e":
         bot.send_privmsg(target, f"{nick}: {whom} has no 5e character.")
         return
-    old_hp = char.get("hp_current", 0)
-    new_hp = max(0, old_hp - amount)
-    char["hp_current"] = new_hp
-    save_character(char)
-    if new_hp == 0:
-        status = "\x02UNCONSCIOUS! (0 HP)\x02 — make death saving throws!"
-    else:
-        status = f"HP: {new_hp}/{char['hp_max']}"
-    bot.send_privmsg(target,
-        f"\x02{whom}\x02 takes \x02{amount} damage\x02! {status}")
+    _apply_damage_to_player(char, amount, "the DM", f"DM dealt {amount} damage", bot, target)
 
 
 # ---- Ops-only DM management ----
@@ -883,3 +885,395 @@ def cmd_players(bot, nick, target, args):
             f"\x02\u2694 Full party list \u2694\x02")
         for row in rows:
             bot.send_privmsg(nick, row)
+
+
+# ================================================================
+# Combat Engine
+# ================================================================
+
+def _parse_monster_attack(attacks_str: str) -> Tuple[int, int, int, int]:
+    """
+    Extract (atk_bonus, num_dice, die_sides, dmg_mod) from the first
+    attack entry in a monster's attacks string.
+    e.g. "Bite +7 2d6+4 piercing" → (7, 2, 6, 4)
+    Falls back to (3, 1, 6, 0) if no match.
+    """
+    m = re.search(r'\+(\d+)\s+(\d+)d(\d+)([+-]\d+)?', attacks_str)
+    if m:
+        return (int(m.group(1)), int(m.group(2)),
+                int(m.group(3)), int(m.group(4)) if m.group(4) else 0)
+    return 3, 1, 6, 0
+
+
+def _roll_ndm(n: int, d: int) -> int:
+    return sum(random.randint(1, d) for _ in range(max(1, n)))
+
+
+def _hp_bar(current: int, maximum: int, width: int = 10) -> str:
+    pct    = current / maximum if maximum else 0
+    filled = round(pct * width)
+    return "\u2588" * filled + "\u2591" * (width - filled)
+
+
+def _apply_damage_to_player(
+    char: dict, amount: int,
+    killer: str, killing_blow: str,
+    bot, channel: str
+):
+    """
+    Shared damage handler used by !dm damage, !fight, and !dm ambush.
+    Applies damage, saves character, announces result.
+    If HP reaches 0: buries the character and announces death.
+    """
+    whom   = char["nick"]
+    old_hp = char.get("hp_current", 0)
+    new_hp = max(0, old_hp - amount)
+    char["hp_current"] = new_hp
+    save_character(char)
+
+    if new_hp == 0:
+        # Announce hit first
+        bot.send_privmsg(channel,
+            f"\x02{whom}\x02 takes \x02{amount} damage\x02! "
+            f"\x02\u2620 FATAL BLOW! \u2620\x02")
+        _kill_character(char, killer, killing_blow, bot, channel)
+    else:
+        bar = _hp_bar(new_hp, char.get("hp_max", new_hp))
+        bot.send_privmsg(channel,
+            f"\x02{whom}\x02 takes \x02{amount} damage\x02! "
+            f"[{bar}] HP: {new_hp}/{char.get('hp_max', new_hp)}")
+
+
+def _kill_character(char: dict, killer: str, killing_blow: str, bot, channel: str):
+    """Bury a character in the graveyard and announce their death."""
+    nick = char["nick"]
+    name = char.get("name", nick)
+
+    # Clear any active encounter
+    with _enc_lock:
+        _encounters.pop(nick.lower(), None)
+
+    bury_character(char, killer, killing_blow)
+
+    bot.send_privmsg(channel,
+        f"\x02\u26b0 {name} has fallen! \u26b0\x02  "
+        f"Slain by \x02{killer}\x02. "
+        f"Use \x02!tombstone {nick}\x02 to pay your respects.")
+
+
+# ----------------------------------------------------------------
+# !fight <monster>  — player-initiated one-round combat
+# ----------------------------------------------------------------
+
+def cmd_fight(bot, nick, target, args):
+    """`!fight <monster>` — engage a monster in combat (one round per call)."""
+    if not target.startswith("#"):
+        bot.send_privmsg(nick, "Use !fight in a channel.")
+        return
+
+    query = args.strip()
+    if not query:
+        bot.send_privmsg(target,
+            f"{nick}: !fight <monster>  e.g. !fight goblin  |  !fight vampire spawn")
+        return
+
+    # Check character exists and is alive
+    char = load_character(nick)
+    if not char or char.get("system") != "dnd5e":
+        bot.send_privmsg(target, f"{nick}: you need a 5e character first. Use !newchar.")
+        return
+    if is_dead(nick):
+        bot.send_privmsg(target,
+            f"{nick}: your character is dead. Use !tombstone {nick} to view their record.")
+        return
+    if char.get("hp_current", 0) <= 0:
+        bot.send_privmsg(target,
+            f"{nick}: {char['name']} is unconscious! You need healing first.")
+        return
+
+    # Find monster
+    from monsters_data import find_monster, cr_str, CR_XP
+    key, monster = find_monster(query)
+    if key is None:
+        if isinstance(monster, list):
+            bot.send_privmsg(target,
+                f"{nick}: ambiguous — did you mean: {', '.join(monster[:5])}?")
+        else:
+            bot.send_privmsg(target,
+                f"{nick}: monster not found. Try !cr <n> for a list.")
+        return
+
+    m_name = monster["name"]
+    nick_l = nick.lower()
+
+    # Get or init per-player encounter
+    with _enc_lock:
+        enc = _encounters.get(nick_l)
+        if enc is None or enc["monster_key"] != key:
+            enc = {
+                "monster_key": key,
+                "monster_hp":  monster["hp"],
+                "monster_max": monster["hp"],
+            }
+            _encounters[nick_l] = enc
+        m_hp  = enc["monster_hp"]
+        m_max = enc["monster_max"]
+
+    # ── Player attacks monster ─────────────────────────────────────
+    mods    = char.get("modifiers", {})
+    prof    = char.get("proficiency_bonus", 2)
+    primary = CLASSES.get(char.get("class", ""), {}).get("primary_ability", "STR")
+    if "STR" in primary and "DEX" not in primary:
+        atk_stat = "str"
+    elif "DEX" in primary and "STR" not in primary:
+        atk_stat = "dex"
+    else:
+        atk_stat = "dex" if mods.get("dex", 0) >= mods.get("str", 0) else "str"
+
+    ab_mod      = mods.get(atk_stat, 0)
+    p_roll      = random.randint(1, 20)
+    p_total     = p_roll + ab_mod + prof
+    p_crit      = p_roll == 20
+    p_fumble    = p_roll == 1
+    p_hit       = p_crit or (not p_fumble and p_total >= monster["ac"])
+
+    p_dmg, p_dmg_str = 0, ""
+    if p_hit:
+        num_dice = 2 if p_crit else 1
+        p_dmg    = max(0, _roll_ndm(num_dice, 8) + ab_mod)
+        m_hp     = max(0, m_hp - p_dmg)
+        with _enc_lock:
+            _encounters[nick_l]["monster_hp"] = m_hp
+        suffix   = " \x02(CRIT!)\x02" if p_crit else ""
+        p_dmg_str = f"\x02{p_dmg} dmg\x02{suffix}"
+    else:
+        p_dmg_str = "\x02FUMBLE!\x02" if p_fumble else "MISS"
+
+    nat_p = " \u2605 NAT 20!" if p_crit else (" nat 1" if p_fumble else "")
+    bot.send_privmsg(target,
+        f"\x02{char['name']}\x02 \u2694 \x02{m_name}\x02: "
+        f"d20({p_roll}){ab_mod:+d}+{prof}prof = {p_total} "
+        f"vs AC {monster['ac']} \u2192 {p_dmg_str}{nat_p}")
+
+    # ── Monster slain? ─────────────────────────────────────────────
+    if m_hp <= 0:
+        with _enc_lock:
+            _encounters.pop(nick_l, None)
+        xp = CR_XP.get(monster["cr"], 0)
+        bot.send_privmsg(target,
+            f"\x02{m_name}\x02 is slain! \u2620  "
+            f"{char['name']} gains \x02{xp} XP\x02!")
+        char["xp"] = char.get("xp", 0) + xp
+        save_character(char)
+        lvl_msg = _do_level_up(char)
+        if lvl_msg:
+            bot.send_privmsg(target, f"\x02{nick}\x02: {lvl_msg}")
+        return
+
+    # Show monster HP bar
+    bar_m = _hp_bar(m_hp, m_max)
+    bot.send_privmsg(target,
+        f"\x02{m_name}\x02: [{bar_m}] {m_hp}/{m_max} HP")
+
+    # ── Monster counterattacks ─────────────────────────────────────
+    atk_b, nd, ds, dm = _parse_monster_attack(monster.get("attacks", ""))
+    m_roll   = random.randint(1, 20)
+    m_total  = m_roll + atk_b
+    m_crit   = m_roll == 20
+    m_fumble = m_roll == 1
+    m_hit    = m_crit or (not m_fumble and m_total >= char.get("ac", 10))
+
+    m_dmg, m_dmg_str = 0, ""
+    if m_hit:
+        num_dice = nd * 2 if m_crit else nd
+        m_dmg    = max(0, _roll_ndm(num_dice, ds) + dm)
+        suffix   = " \x02(CRIT!)\x02" if m_crit else ""
+        m_dmg_str = f"\x02{m_dmg} dmg\x02{suffix}"
+    else:
+        m_dmg_str = "\x02FUMBLE!\x02" if m_fumble else "MISS"
+
+    nat_m = " \u2605 NAT 20!" if m_crit else (" nat 1" if m_fumble else "")
+    bot.send_privmsg(target,
+        f"\x02{m_name}\x02 strikes \x02{char['name']}\x02: "
+        f"d20({m_roll}){atk_b:+d} = {m_total} "
+        f"vs AC {char.get('ac',10)} \u2192 {m_dmg_str}{nat_m}")
+
+    if m_hit and m_dmg > 0:
+        _apply_damage_to_player(
+            char, m_dmg,
+            m_name, f"{m_name} attack for {m_dmg} damage",
+            bot, target
+        )
+
+
+# ----------------------------------------------------------------
+# !dm ambush <nick> <monster>  — DM-initiated monster attack
+# ----------------------------------------------------------------
+
+def _dm_ambush(bot, nick, target, args):
+    """DM command: have a monster make an unprovoked attack on a player."""
+    if not _is_session_dm(target, nick):
+        bot.send_privmsg(target, f"{nick}: only the DM can ambush players.")
+        return
+    parts = args.strip().split(None, 1)
+    if len(parts) < 2:
+        bot.send_privmsg(target,
+            f"{nick}: !dm ambush <player_nick> <monster>  e.g. !dm ambush n01d goblin")
+        return
+    whom, monster_query = parts[0], parts[1]
+
+    char = load_character(whom)
+    if not char or char.get("system") != "dnd5e":
+        bot.send_privmsg(target, f"{nick}: {whom} has no 5e character.")
+        return
+    if is_dead(whom):
+        bot.send_privmsg(target, f"{nick}: {whom}'s character is already dead.")
+        return
+
+    from monsters_data import find_monster
+    key, monster = find_monster(monster_query)
+    if key is None:
+        bot.send_privmsg(target, f"{nick}: monster not found.")
+        return
+
+    m_name = monster["name"]
+    atk_b, nd, ds, dm = _parse_monster_attack(monster.get("attacks", ""))
+    roll   = random.randint(1, 20)
+    total  = roll + atk_b
+    crit   = roll == 20
+    fumble = roll == 1
+    hit    = crit or (not fumble and total >= char.get("ac", 10))
+
+    if hit:
+        num_dice = nd * 2 if crit else nd
+        dmg      = max(0, _roll_ndm(num_dice, ds) + dm)
+        suffix   = " \x02(CRIT!)\x02" if crit else ""
+        bot.send_privmsg(target,
+            f"\x02[AMBUSH]\x02 \x02{m_name}\x02 attacks \x02{whom}\x02: "
+            f"d20({roll}){atk_b:+d} = {total} vs AC {char.get('ac',10)} "
+            f"\u2192 \x02{dmg} dmg\x02{suffix}!")
+        _apply_damage_to_player(
+            char, dmg,
+            m_name, f"{m_name} ambush for {dmg} damage",
+            bot, target
+        )
+    else:
+        miss = "\x02FUMBLE!\x02" if fumble else "MISS"
+        bot.send_privmsg(target,
+            f"\x02[AMBUSH]\x02 \x02{m_name}\x02 attacks \x02{whom}\x02: "
+            f"d20({roll}){atk_b:+d} = {total} vs AC {char.get('ac',10)} \u2192 {miss}")
+
+
+# ================================================================
+# Graveyard Commands
+# ================================================================
+
+_GRAVEYARD_CAP = 4   # max rows in channel before overflow
+
+
+def cmd_graveyard(bot, nick, target, args):
+    """`!graveyard` — list fallen adventurers."""
+    graves = list_graves()   # newest first
+    reply  = target if target.startswith("#") else nick
+
+    if not graves:
+        bot.send_privmsg(reply, "\x02\u26b0 The graveyard is empty.\x02  No one has fallen yet.")
+        return
+
+    bot.send_privmsg(reply,
+        f"\x02\u26b0 The Graveyard ({len(graves)} fallen) \u26b0\x02")
+
+    shown = 0
+    for grave_nick, entry in graves:
+        ts   = entry.get("tombstone", {})
+        name = ts.get("name", grave_nick)
+        race = ts.get("race", "")
+        cls  = ts.get("class", "")
+        lv   = ts.get("level", 1)
+        killer = entry.get("killer", "unknown")
+        bot.send_privmsg(reply,
+            f"  \u2020 \x02{name}\x02 ({grave_nick}) — "
+            f"{race} {cls} Lv.{lv} — Slain by \x02{killer}\x02")
+        shown += 1
+        if shown >= _GRAVEYARD_CAP and len(graves) > _GRAVEYARD_CAP:
+            remaining = len(graves) - shown
+            bot.send_privmsg(reply,
+                f"  …and {remaining} more. Use \x02!tombstone <nick>\x02 for details.")
+            break
+
+
+def cmd_tombstone(bot, nick, target, args):
+    """`!tombstone <nick>` — view a fallen character's full record."""
+    query = args.strip().split()[0] if args.strip() else nick
+    entry = get_tombstone(query)
+
+    if not entry:
+        # Maybe they're still alive
+        char = load_character(query)
+        if char and char.get("system") == "dnd5e":
+            bot.send_privmsg(target,
+                f"{nick}: {query}'s character is still alive! "
+                f"HP: {char.get('hp_current',0)}/{char.get('hp_max',0)}")
+        else:
+            bot.send_privmsg(target,
+                f"{nick}: no tombstone found for '{query}'.")
+        return
+
+    ts     = entry.get("tombstone", {})
+    killer = entry.get("killer", "unknown")
+    blow   = entry.get("killing_blow", "")
+    died   = _ts_str(entry.get("died_at", 0))
+    name   = ts.get("name", query)
+
+    if target.startswith("#"):
+        bot.send_privmsg(target,
+            f"\x02\u26b0 {name} ({query})\x02 — Slain by \x02{killer}\x02 on {died}. "
+            f"Full record sent via PM.")
+
+    ab = ts.get("abilities", {})
+    mo = ts.get("modifiers", {})
+    lines = [
+        f"\x02\u26b0 === TOMBSTONE: {name} === \u26b0\x02",
+        f"  {ts.get('race','')} {ts.get('class','')} Lv.{ts.get('level',1)}  |  "
+        f"Background: {ts.get('background','')}  |  {ts.get('alignment','')}",
+        f"  \x02SLAIN BY:\x02 {killer}",
+        f"  \x02Killing blow:\x02 {blow}",
+        f"  \x02Date of death:\x02 {died}",
+        "  ---",
+        f"  Final HP: 0/{ts.get('hp_max',0)}  |  AC: {ts.get('ac',0)}  |  "
+        f"Level: {ts.get('level',1)}  |  XP: {ts.get('xp',0)}",
+        f"  STR {ab.get('str',0)}({mo.get('str',0):+d})  "
+        f"DEX {ab.get('dex',0)}({mo.get('dex',0):+d})  "
+        f"CON {ab.get('con',0)}({mo.get('con',0):+d})  "
+        f"INT {ab.get('int',0)}({mo.get('int',0):+d})  "
+        f"WIS {ab.get('wis',0)}({mo.get('wis',0):+d})  "
+        f"CHA {ab.get('cha',0)}({mo.get('cha',0):+d})",
+        f"  Skills: {', '.join(ts.get('skill_proficiencies', [])) or 'None'}",
+    ]
+    if ts.get("personality"):
+        lines.append(f"  Last words: \"{ts['personality']}\"")
+    if ts.get("inventory"):
+        lines.append(f"  Buried with: {', '.join(ts['inventory'])}")
+
+    for line in lines:
+        bot.send_privmsg(nick, line)
+
+
+def cmd_rez(bot, nick, target, args):
+    """`!rez <nick>` — admin/DM only: resurrect a fallen character with 1 HP."""
+    if nick.lower() not in ADMINS and not (target.startswith("#") and is_op(target, nick)):
+        bot.send_privmsg(target, f"{nick}: only admins or ops can resurrect characters.")
+        return
+    whom = args.strip().split()[0] if args.strip() else ""
+    if not whom:
+        bot.send_privmsg(target, f"{nick}: !rez <nick>")
+        return
+    if resurrect(whom):
+        char = load_character(whom)
+        name = char.get("name", whom) if char else whom
+        bot.send_privmsg(target,
+            f"\x02{name}\x02 ({whom}) has been resurrected with 1 HP! "
+            f"Death is not the end — for today.")
+    else:
+        bot.send_privmsg(target,
+            f"{nick}: {whom} is not in the graveyard.")

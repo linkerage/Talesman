@@ -30,6 +30,8 @@ def cmd_help(bot, nick, target, args):
         "\x02Combat:\x02   !attack [target]  !skill <name>  !save <str|dex|con|int|wis|cha>",
         "\x02Gold/XP:\x02  !gold [nick]  !pay <nick> <n>  !cash  !xp [nick]  !hp [nick]",
         "\x02DM seat:\x02  !dm claim  start [title]  narrate <text>  award <nick> <n> [gp|xp]",
+        "\x02Combat:\x02   !fight <monster>  (call again each round to continue)",
+        "\x02Graveyard:\x02 !graveyard  !tombstone <nick>  !rez <nick> (admin/DM only)",
         "\x02MM/DMG:\x02   !monster <name>  !cr <cr>  !encounter <diff> <lvl>  !loot [cr]  !mitem [name]",
     ]
     for line in lines:
@@ -310,6 +312,11 @@ COMMANDS = {
     "!inventory":  lambda bot, nick, target, args: _game.cmd_inventory(bot, nick, target, args),
     "!session":    lambda bot, nick, target, args: _game.cmd_session(bot, nick, target, args),
     "!players":    lambda bot, nick, target, args: _game.cmd_players(bot, nick, target, args),
+    # Combat + graveyard
+    "!fight":      lambda bot, nick, target, args: _game.cmd_fight(bot, nick, target, args),
+    "!graveyard":  lambda bot, nick, target, args: _game.cmd_graveyard(bot, nick, target, args),
+    "!tombstone":  lambda bot, nick, target, args: _game.cmd_tombstone(bot, nick, target, args),
+    "!rez":        lambda bot, nick, target, args: _game.cmd_rez(bot, nick, target, args),
     # Monster Manual + DMG reference
     "!monster":    lambda bot, nick, target, args: _gm.cmd_monster(bot, nick, target, args),
     "!cr":         lambda bot, nick, target, args: _gm.cmd_cr(bot, nick, target, args),
