@@ -28,11 +28,7 @@ def enqueue_question(bot, nick: str, target: str, prompt: str):
         bot.send_privmsg(target, f"{nick}: ask queue is full, try again later.")
 
 
-def send_typing_indicator(bot, target, nick):
-    """
-    Sends a temporary typing indicator to IRC.
-    """
-    bot.send_privmsg(target, f"{nick}: …thinking…")
+MAX_ANSWER_LINES = 3   # max lines sent to channel per !ask response
 
 
 def ask_worker(bot):
@@ -49,40 +45,30 @@ def ask_worker(bot):
 
             stream_fn = stream_gemini_admin if is_admin else stream_gemini
 
-            # Acknowledge queue
+            # Acknowledge queue (keep this one — it's the only pre-answer line)
             bot.send_privmsg(target, f"{nick}: your question has been queued…")
 
-            # Typing indicator
-            send_typing_indicator(bot, target, nick)
-
-            first_chunk = True
-
-            # Simple rate limiting: max ~3 lines/sec
-            LINE_DELAY = 0.3
-
-            # STREAMING RESPONSE
+            # Collect the full streamed response before sending anything
             buffer = ""
-
             for chunk in stream_fn(prompt):
-                if chunk is None:
-                    continue
+                if chunk is not None:
+                    buffer += chunk
 
-                buffer += chunk
+            # Convert markdown to plain IRC text, split into non-blank lines
+            full_text = markdown_to_irc(buffer.strip())
+            lines = [l for l in full_text.split("\n") if l.strip()]
 
-                # On first real output, clear typing indicator with a header
-                if first_chunk:
-                    first_chunk = False
-                    bot.send_privmsg(target, f"{nick}: answer:")
+            # Send up to MAX_ANSWER_LINES; if truncated, note it
+            to_send = lines[:MAX_ANSWER_LINES]
+            truncated = len(lines) > MAX_ANSWER_LINES
 
-                # Convert accumulated markdown to IRC
-                formatted = markdown_to_irc(buffer)
-                buffer = ""  # reset after conversion
+            for line in to_send:
+                bot.send_privmsg(target, f"{nick}: {line}")
 
-                for line in formatted.split("\n"):
-                    if not line.strip():
-                        continue
-                    bot.send_privmsg(target, f"{nick}: {line}")
-                    time.sleep(LINE_DELAY)
+            if truncated:
+                bot.send_privmsg(target,
+                    f"{nick}: (truncated — {len(lines) - MAX_ANSWER_LINES} more "
+                    f"line{'s' if len(lines) - MAX_ANSWER_LINES != 1 else ''} omitted)")
 
         except Exception as e:
             logging.error(f"Gemini worker error: {e}")
