@@ -136,8 +136,54 @@ DM commands are issued in the **channel** and apply to that channel's session.
 | Command | Description |
 |---|---|
 | `!dm heal <nick> <n>` | Restore HP (capped at max) |
-| `!dm damage <nick> <n>` | Deal damage; announces UNCONSCIOUS if HP reaches 0 |
+| `!dm damage <nick> <n>` | Deal damage — if HP reaches 0, character is killed and moved to the graveyard |
 | `!dm dmg <nick> <n>` | Shorthand for damage |
+| `!dm ambush <nick> <monster>` | DM-initiated monster attack — the named monster rolls against the player's AC and deals damage (or misses) |
+
+---
+
+## Combat
+
+Players fight monsters from the SRD Monster Manual database. Combat is **one round per command call** — call `!fight` repeatedly to continue the encounter until one side is dead.
+
+| Command | Description |
+|---|---|
+| `!fight <monster>` | Attack the named monster. Monster counterattacks. Repeat each round to continue. |
+
+### How a round works
+1. **Player attacks** — d20 + primary ability modifier + proficiency vs monster AC
+2. **On hit** — 1d8 + ability mod damage (2d8 on a natural 20 critical)
+3. **Monster HP bar** — shown after each hit if the monster survives
+4. **Monster counterattacks** — uses the monster's actual attack bonus and damage from the stat block
+5. **On a monster hit** — damage applied to player HP immediately
+
+### Combat outcomes
+- **Monster slain** — XP auto-awarded to the player; level-up announced if threshold crossed
+- **Player killed** — character moved permanently to the **Graveyard** (see below)
+- **Natural 20** — critical hit, damage dice doubled
+- **Natural 1** — fumble, always a miss
+
+> Each player tracks their own encounter. Monster HP persists between rounds until it dies or you switch to a different monster.
+
+---
+
+## Graveyard
+
+Death is permanent. When a character's HP reaches 0 (from `!fight`, `!dm damage`, or `!dm ambush`), they are immediately buried with a full tombstone record. Dead characters **cannot** fight, use skills, or take any gameplay actions.
+
+| Command | Description |
+|---|---|
+| `!graveyard` | List all fallen adventurers (name, nick, race/class/level, killer) |
+| `!tombstone <nick>` | One-liner in channel + full record in PM: final stats, killer, killing blow, date of death, last words, items buried with them |
+| `!rez <nick>` | **Admin/DM only** — resurrect a character with 1 HP, removing them from the graveyard |
+
+### Tombstone contents
+Every tombstone permanently records:
+- Full character snapshot at time of death (race, class, level, all ability scores, skills, inventory)
+- Cause of death and exact killing blow
+- UTC timestamp
+- Personality trait as "last words"
+- Items they were carrying at death ("buried with")
 
 ---
 
@@ -216,19 +262,49 @@ All game state is stored as JSON in `data/`:
 - `characters/<nick>.json` — Individual 5e character sheets
 - `sessions.json` — Active DM sessions per channel (survives restart)
 - `dm_config.json` — Per-channel DM lock configuration
+- `graveyard.json` — Permanent tombstone records for all fallen characters
 
 ### Legacy System
 The original modern-day RPG system (`!create`, `!sheet`, `!bio`, `!thesis`) is still available alongside the D&D 5e system. Old characters are stored in `data/characters.json` and are distinguished by the absence of a `"system": "dnd5e"` field.
 
 ---
 
+## Monster Manual & DMG Reference
+
+The SRD 5.2 Monster Manual (50+ creatures) and Dungeon Master's Guide (55+ magic items, treasure tables, encounter budgets) are built into the bot as a DM reference tool.
+
+### Monster lookups
+| Command | Description |
+|---|---|
+| `!monster <name>` | 2-line stat summary in channel + full stat block (HP/AC/abilities/attacks/traits/immunities) sent via PM |
+| `!cr <cr>` | List all monsters in the database at a given challenge rating (e.g. `!cr 5`, `!cr 1/4`) |
+
+### Encounter building (DMG)
+| Command | Description |
+|---|---|
+| `!encounter <difficulty> <level> [party_size]` | Calculate XP budget for an encounter — difficulty: `easy` `medium` `hard` `deadly`; default party size 4 |
+
+Example: `!encounter hard 5 4` → **3,000 XP budget** for a hard encounter vs. a level-5 party of 4.
+
+### Treasure (DMG)
+| Command | Description |
+|---|---|
+| `!loot [cr]` | Roll random treasure for a creature of the given CR — individual drop + hoard coins + 1-3 magic items |
+| `!mitem <name>` | Look up a specific magic item (Bag of Holding, Vorpal Sword, Flame Tongue, etc.) |
+| `!mitem <rarity>` | Get a random magic item of that rarity (`common` `uncommon` `rare` `very rare` `legendary`) |
+| `!mitem` | List all items by rarity |
+
+### Available monsters (by CR)
+Commoner (0) · Rat (0) · Bandit (1/8) · Kobold (1/8) · Skeleton (1/4) · Goblin (1/4) · Wolf (1/4) · Zombie (1/4) · Hobgoblin (1/2) · Orc (1/2) · Bugbear (1) · Giant Spider (1) · Ghoul (1) · Imp (1) · Ogre (2) · Gelatinous Cube (2) · Mimic (2) · Nothic (2) · Wererat (2) · Owlbear (3) · Wight (3) · Werewolf (3) · Manticore (3) · Ghost (4) · Succubus/Incubus (4) · Hill Giant (5) · Troll (5) · Flesh Golem (5) · Vampire Spawn (5) · Medusa (6) · Wyvern (6) · Mind Flayer (7) · Stone Giant (7) · Frost Giant (8) · Hydra (8) · Young Green Dragon (8) · Fire Giant (9) · Deva (10) · Stone Golem (10) · Young Red Dragon (10) · Remorhaz (11) · Archmage (12) · Iron Golem (16) · Vampire (13) · Purple Worm (15) · Death Knight (17) · Adult Red Dragon (17) · Ancient Red Dragon (24) · Lich (21) · Tarrasque (30)
+
+---
+
 ## Planned Expansions
 
-- Monster Manual data (encounter building, creature stats)
-- Dungeon Master's Guide (magic items, loot tables)
 - Spell lists and spell slot tracking
-- Combat initiative tracker
+- Combat initiative tracker (multi-player turn order)
 - Quest log system
+- Additional MM/DMG monsters and magic items
 
 ---
 
