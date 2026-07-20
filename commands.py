@@ -129,8 +129,9 @@ def cmd_readme(bot, nick, target, args):
         "\x02═══ Active in #gentoo-weed  ##?  #jedi ═══\x02",
         "Full docs: https://github.com/linkerage/Talesman",
     ]
-    for line in lines:
-        bot.send_privmsg(nick, line)
+    # send_pm_bulk uses CHANNEL_SEND_DELAY (0.5 s/line) so 87 lines
+    # takes ~43 s — well under Libera's flood threshold at any length.
+    bot.send_pm_bulk(nick, lines)
     if target.startswith("#"):
         bot.send_privmsg(target, f"{nick}: full command reference sent to your PM.")
 

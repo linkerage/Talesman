@@ -94,13 +94,25 @@ class TalesmanBot:
         """
         Send PRIVMSG lines with flood-safe pacing.
         Channel targets use CHANNEL_SEND_DELAY; PMs use PM_SEND_DELAY.
-        Blank lines are skipped so they don’t waste flood budget.
+        Blank lines are skipped so they don't waste flood budget.
         """
         delay = CHANNEL_SEND_DELAY if target.startswith("#") else PM_SEND_DELAY
         for line in msg.split("\n"):
             if not line.strip():   # skip blank / whitespace-only lines
                 continue
             self._throttled_send(f"PRIVMSG {target} :{line}", delay)
+
+    def send_pm_bulk(self, nick: str, lines):
+        """
+        Send a large block of PM lines at CHANNEL_SEND_DELAY (0.5 s/line).
+        Use this instead of send_privmsg for any bulk PM output (e.g. !readme)
+        to stay safely under Libera's flood threshold regardless of length.
+        Blank/whitespace-only lines are skipped.
+        """
+        for line in lines:
+            if not str(line).strip():
+                continue
+            self._throttled_send(f"PRIVMSG {nick} :{line}", CHANNEL_SEND_DELAY)
 
     # ------------------------------------------------------------
     # SASL AUTH
