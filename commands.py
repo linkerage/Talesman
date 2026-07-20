@@ -16,6 +16,7 @@ from utils import roll_dice
 from config import ADMINS
 from persistence import load_character, char_path
 import game as _game
+import gm_tools as _gm
 
 
 # ------------------------------------------------------------
@@ -29,6 +30,7 @@ def cmd_help(bot, nick, target, args):
         "\x02Combat:\x02   !attack [target]  !skill <name>  !save <str|dex|con|int|wis|cha>",
         "\x02Gold/XP:\x02  !gold [nick]  !pay <nick> <n>  !cash  !xp [nick]  !hp [nick]",
         "\x02DM seat:\x02  !dm claim  start [title]  narrate <text>  award <nick> <n> [gp|xp]",
+        "\x02MM/DMG:\x02   !monster <name>  !cr <cr>  !encounter <diff> <lvl>  !loot [cr]  !mitem [name]",
     ]
     for line in lines:
         bot.send_privmsg(target, line)
@@ -308,6 +310,12 @@ COMMANDS = {
     "!inventory":  lambda bot, nick, target, args: _game.cmd_inventory(bot, nick, target, args),
     "!session":    lambda bot, nick, target, args: _game.cmd_session(bot, nick, target, args),
     "!players":    lambda bot, nick, target, args: _game.cmd_players(bot, nick, target, args),
+    # Monster Manual + DMG reference
+    "!monster":    lambda bot, nick, target, args: _gm.cmd_monster(bot, nick, target, args),
+    "!cr":         lambda bot, nick, target, args: _gm.cmd_cr(bot, nick, target, args),
+    "!encounter":  lambda bot, nick, target, args: _gm.cmd_encounter(bot, nick, target, args),
+    "!loot":       lambda bot, nick, target, args: _gm.cmd_loot(bot, nick, target, args),
+    "!mitem":      lambda bot, nick, target, args: _gm.cmd_mitem(bot, nick, target, args),
 }
 
 
